@@ -1714,7 +1714,7 @@ function renderEditorSidebar(){
           currentPageIdx=i; currentActiveSide=side;
           const sel = (i===0) ? `[data-spread-idx="0"]` : `.mobile-page[data-spread-idx="${i}"][data-page-side="${side}"]`;
           const t=area&&area.querySelector(sel);
-          if(t) t.scrollIntoView({behavior:'smooth',block:'start'});
+          if(t) scrollCanvasToEl(t);
           renderEditorSidebar(); renderLayoutPicker();
         };
         sidebar.appendChild(div);
@@ -1735,7 +1735,7 @@ function renderEditorSidebar(){
       div.innerHTML=`<div class="sidebar-spread-inner"><div class="spread-half" style="flex:1">${coverThumb}</div></div><div class="spread-label">1</div>`;
       div.onclick=()=>{
         currentPageIdx=i;
-        if(isMobile){ const t=area&&area.querySelector(`[data-spread-idx="${i}"]`); if(t) t.scrollIntoView({behavior:'smooth',block:'start'}); }
+        if(isMobile){ const t=area&&area.querySelector(`[data-spread-idx="${i}"]`); if(t) scrollCanvasToEl(t); }
         else renderSpread(i);
         renderEditorSidebar(); renderLayoutPicker();
       };
@@ -1827,6 +1827,16 @@ function buildSpreadHTML(book, idx, isMobile){
   return `<div class="spread-canvas" data-spread-idx="${idx}"><div class="spread-inner">${leftHTML}<div class="spread-gutter"></div>${rightHTML}</div></div>`;
 }
 
+// Зөвхөн canvas дотор гүйлгэнэ (body/nav-г хөдөлгөхгүй → thumbnail nav-ийн доор орохгүй)
+function scrollCanvasToEl(el){
+  const area=document.getElementById('canvasArea');
+  if(!area||!el) return;
+  const rel = el.getBoundingClientRect().top - area.getBoundingClientRect().top + area.scrollTop;
+  // Хуудсыг canvas-ийн голд байрлуулна (snap-align:center-тэй нийцүүлнэ)
+  const top = rel - Math.max(0,(area.clientHeight - el.clientHeight)/2);
+  area.scrollTo({top:Math.max(0,top), behavior:'smooth'});
+}
+
 function renderSpread(idx){
   const book=getBook(); if(!book) return;
   const sp=book.spreads[idx];
@@ -1847,7 +1857,7 @@ function renderSpread(idx){
     }
     area.innerHTML=book.spreads.map((_,i)=>buildSpreadHTML(book,i,true)).join('');
     const target=area.querySelector(`[data-spread-idx="${idx}"]`);
-    if(target) target.scrollIntoView({behavior:'smooth',block:'start'});
+    if(target) scrollCanvasToEl(target);
   } else {
     area.innerHTML=buildSpreadHTML(book,idx,false);
   }
