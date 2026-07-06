@@ -2058,14 +2058,13 @@ async function handleBulkUpload(e){
     const file=files[i];
     const slot=slots[i];
     if(!slot) break;
+    showToast('Зураг байршуулж байна… ('+(i+1)+'/'+files.length+')');
     try{
-      const dataUrl=await readFileAsDataURL(file);
-      let src=dataUrl;
-      try{ src=await compressImage(src,1200,0.82); }catch(err){}
+      const up=await uploadToCloudinary(file);   // оригинал бүтэн нягтрал, Cloudinary руу
       const sp=book.spreads[slot.spreadIdx];
       if(!sp[slot.side]) sp[slot.side]={images:[],caption:''};
       if(!sp[slot.side].images) sp[slot.side].images=[];
-      sp[slot.side].images[slot.slotIdx]={src, rot:0, fit:'contain', caption:'', px:0, py:0};
+      sp[slot.side].images[slot.slotIdx]={src:up.src, rot:0, fit:'contain', caption:'', px:0, py:0};
       successCount++;
     }catch(err){
       console.warn('Bulk upload failed:', file.name, err);
@@ -2121,43 +2120,39 @@ function readFileAsDataURL(file){
   });
 }
 
-function handleSlotUpload(e, spreadIdx, side, slotIdx){
+async function handleSlotUpload(e, spreadIdx, side, slotIdx){
   spreadIdx=parseInt(spreadIdx); slotIdx=parseInt(slotIdx);
   const file=e.target.files[0]; if(!file) return;
-  const reader=new FileReader();
-  reader.onload=async function(ev){
-    const book=getBook(); if(!book) return;
-    if(!book.spreads[spreadIdx]) return;
-    if(!book.spreads[spreadIdx][side]) book.spreads[spreadIdx][side]={images:[],caption:''};
-    if(!book.spreads[spreadIdx][side].images) book.spreads[spreadIdx][side].images=[];
-    const existing=book.spreads[spreadIdx][side].images[slotIdx];
-    const prevCaption=(existing&&existing.caption)||'';
-    // Compress image before saving
-    let src=ev.target.result;
-    try{ src=await compressImage(src,1400,0.85); }catch(e){ console.warn('Compress failed',e); }
-    book.spreads[spreadIdx][side].images[slotIdx]={src, rot:0, fit:'contain', caption:prevCaption, px:0, py:0};
-    try{
-      saveBook(book);
-    }catch(err){
-      if(err.name==='QuotaExceededError'){
-        // Try harder compression
-        try{
-          src=await compressImage(src,800,0.7);
-          book.spreads[spreadIdx][side].images[slotIdx].src=src;
-          saveBook(book);
-        }catch(e2){
-          showToast('Зай дүүрсэн байна. Хуучин номоо устгана уу.');
-          return;
-        }
-      }
-    }
+  e.target.value='';
+  const book=getBook(); if(!book) return;
+  if(!book.spreads[spreadIdx]) return;
+  if(!book.spreads[spreadIdx][side]) book.spreads[spreadIdx][side]={images:[],caption:''};
+  if(!book.spreads[spreadIdx][side].images) book.spreads[spreadIdx][side].images=[];
+  const existing=book.spreads[spreadIdx][side].images[slotIdx];
+  const prevCaption=(existing&&existing.caption)||'';
+
+  // 1) Шуурхай урьдчилсан харагдац (base64) — хэрэглэгч тэр даруй зургаа хардаг
+  let preview='';
+  try{ preview=await readFileAsDataURL(file); }catch(_){}
+  book.spreads[spreadIdx][side].images[slotIdx]={src:preview, rot:0, fit:'contain', caption:prevCaption, px:0, py:0, uploading:true};
+  renderSpread(currentPageIdx);
+  renderEditorSidebar();
+  showToast('Зураг байршуулж байна…');
+
+  // 2) Оригинал бүтэн нягтралтай зургийг Cloudinary руу байршуулна (шахахгүй)
+  try{
+    const up=await uploadToCloudinary(file);
+    const b=getBook(); if(!b) return;
+    const cur=b.spreads[spreadIdx] && b.spreads[spreadIdx][side] && b.spreads[spreadIdx][side].images[slotIdx];
+    if(cur){ cur.src=up.src; cur.uploading=false; }
+    saveBook(b);
     renderSpread(currentPageIdx);
     renderEditorSidebar();
     showToast('Зураг оруулагдлаа ✓',true);
-  };
-  reader.onerror=function(){ showToast('Зураг уншихад алдаа гарлаа'); };
-  reader.readAsDataURL(file);
-  e.target.value='';
+  }catch(err){
+    console.warn('Cloudinary upload failed', err);
+    showToast('Зураг байршуулахад алдаа гарлаа. Дахин оролдоно уу.');
+  }
 }
 
 async function rotateSlot(spreadIdx, side, slotIdx){
@@ -3029,12 +3024,21 @@ async function generatePDF(orders, filename){
   showToast('PDF бэлдэж байна…');
 
   // Preload all images first so naturalWidth/Height are available
+  function hiResUrl(src){
+    // Cloudinary URL бол хэвлэхэд тохирсон өндөр чанар/хэмжээ хүснэ
+    if(typeof src==='string' && src.indexOf('res.cloudinary.com')>-1 && src.indexOf('/upload/')>-1){
+      return src.replace('/upload/','/upload/w_2400,q_auto:best/');
+    }
+    return src;
+  }
   async function loadImg(src){
     return new Promise(res=>{
       const img=new Image();
+      // Cloudinary зурагт CORS хэрэгтэй — эс бөгөөс canvas (cover crop) tainted болно
+      if(typeof src==='string' && src.indexOf('http')===0) img.crossOrigin='anonymous';
       img.onload=()=>res(img);
       img.onerror=()=>res(null);
-      img.src=src;
+      img.src=hiResUrl(src);
     });
   }
   const imgCache={};
@@ -3073,8 +3077,12 @@ async function generatePDF(orders, filename){
         if(slotAspect>aspect){ih=rh;iw=ih*aspect;}
         else{iw=rw;ih=iw/aspect;}
         ix=rx+(rw-iw)/2; iy=ry+(rh-ih)/2;
-        const fmt=imgData.src.startsWith('data:image/png')?'PNG':'JPEG';
-        doc.addImage(imgData.src,fmt,ix,iy,iw,ih,undefined,'FAST');
+        if(cached){
+          doc.addImage(cached,'JPEG',ix,iy,iw,ih,undefined,'FAST');
+        } else {
+          const fmt=imgData.src.startsWith('data:image/png')?'PNG':'JPEG';
+          doc.addImage(imgData.src,fmt,ix,iy,iw,ih,undefined,'FAST');
+        }
       } else {
         // Cover: crop using canvas
         const scale=3;
