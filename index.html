@@ -1621,6 +1621,9 @@ function applyMobileSidebarLayout(){
   }
 }
 window.addEventListener('resize', applyMobileSidebarLayout);
+// Фонт/ачаалал дууссаны дараа nav-ийн өндрийг дахин хэмжинэ (эхний тооцоолол зөв байхын тулд)
+window.addEventListener('load', applyMobileSidebarLayout);
+if(document.fonts && document.fonts.ready){ document.fonts.ready.then(()=>applyMobileSidebarLayout()); }
 
 function renderEditor(){
   const book=getBook(); if(!book) return;
@@ -1721,7 +1724,11 @@ function renderEditorSidebar(){
       });
     });
     const activeElM=sidebar.querySelector('.sidebar-spread.active');
-    if(activeElM) activeElM.scrollIntoView({block:'nearest',inline:'nearest',behavior:'smooth'});
+    if(activeElM){
+      // Зөвхөн strip-ийг хэвтээ чиглэлд гүйлгэнэ (body-г босоогоор хөдөлгөхгүй)
+      const left = activeElM.offsetLeft - (sidebar.clientWidth - activeElM.clientWidth)/2;
+      sidebar.scrollTo({left:Math.max(0,left), behavior:'smooth'});
+    }
     return;
   }
 
