@@ -376,6 +376,37 @@ nav{display:flex;align-items:center;justify-content:space-between;padding:1rem 2
   .btn-full{padding:.9rem;font-size:1rem}
   .nav-right{gap:.4rem}
   .nav-btn{padding:.4rem .7rem;font-size:.75rem}
+  /* ═══ MOBILE CANVAS ЗАСВАР: нэг нүүр бүтэн + цэвэрхэн зай + snap ═══ */
+  .editor-canvas-area{
+    padding:10px 10px 12px !important;
+    scroll-snap-type:y mandatory !important;
+    scroll-padding:10px !important;
+    scroll-behavior:smooth;
+  }
+  /* Нэг нүүр = нэг mobile-page. Snap-аар нэг нэгээр нь бүтэн харуулна */
+  .mobile-page{
+    scroll-snap-align:center !important;
+    scroll-snap-stop:always !important;
+    margin:0 auto 12px !important;
+    width:auto !important;
+    max-width:100% !important;
+    height:auto !important;
+    aspect-ratio:1/1 !important;
+    max-height:calc(100dvh - 200px) !important;
+    border-radius:3px !important;
+  }
+  .mobile-page:last-child{margin-bottom:0 !important}
+  .mobile-page .page-side{height:100% !important;width:auto !important;aspect-ratio:1/1 !important;margin:0 auto !important}
+  /* ═══ SIDEBAR THUMBNAIL МӨРИЙГ БҮТЭН ИЛ ГАРГАХ (таслагдахгүй) ═══ */
+  .editor-sidebar-wrap{overflow:hidden !important;padding:0 !important}
+  .editor-sidebar{
+    align-items:center !important;
+    height:auto !important;
+    padding:.55rem .5rem !important;
+  }
+  .sidebar-spread{min-width:62px !important;max-width:62px !important}
+  .sidebar-spread-inner{height:46px !important}
+  .spread-label{padding:.18rem 0 !important;font-size:.55rem !important}
 }
 /* ── CHECKOUT ── */
 .checkout-wrap{max-width:800px;margin:0 auto;padding:2.5rem 2rem}
@@ -567,9 +598,13 @@ nav{display:flex;align-items:center;justify-content:space-between;padding:1rem 2
 .preview-modal-close{background:rgba(255,255,255,.1);border:none;color:#fff;padding:.5rem 1rem;border-radius:100px;cursor:pointer;font-size:.85rem;font-family:'Inter',sans-serif;transition:.15s}
 .preview-modal-close:hover{background:rgba(255,255,255,.2)}
 .preview-modal-iframe{flex:1;width:100%;border:none;background:#2a2a2a}
+.preview-float-close{position:fixed;top:calc(10px + env(safe-area-inset-top,0px));right:14px;z-index:700;width:42px;height:42px;border-radius:50%;border:none;background:rgba(0,0,0,.72);color:#fff;font-size:1.15rem;line-height:1;cursor:pointer;display:none;align-items:center;justify-content:center;box-shadow:0 2px 12px rgba(0,0,0,.45)}
+.preview-float-close:active{background:rgba(0,0,0,.9)}
 @media(max-width:900px){
   .preview-modal-overlay{padding:0}
-  .preview-modal{border-radius:0;height:100vh;max-width:100%}
+  .preview-modal{border-radius:0;height:100vh;height:100dvh;max-width:100%}
+  .preview-modal-header{display:none}
+  .preview-modal-overlay.open .preview-float-close{display:flex}
 }
 #sidebarLayoutLeft .layout-opt svg,#sidebarLayoutRight .layout-opt svg{width:100%;height:100%}
 
@@ -840,6 +875,7 @@ nav{display:flex;align-items:center;justify-content:space-between;padding:1rem 2
 
   <!-- PREVIEW MODAL -->
   <div class="preview-modal-overlay" id="previewModalOverlay">
+    <button class="preview-float-close" onclick="closePreviewModal()" aria-label="Хаах">✕</button>
     <div class="preview-modal">
       <div class="preview-modal-header">
         <span>👁 Preview</span>
@@ -1071,35 +1107,60 @@ async function uploadToCloudinary(file){
 }
 
 // ==================== SUPABASE DB ====================
+// Supabase мөр → апп-ын номын объект (snake_case → camelCase)
+function rowToBook(r){
+  return {
+    id: r.id,
+    userId: r.user_id,
+    title: r.title || '',
+    spreads: r.spreads || [],
+    createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now()
+  };
+}
+// uuid эсэхийг шалгах (Supabase id vs хуучин 'b...' id)
+function isUuid(v){ return typeof v==='string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v); }
+
 async function dbGetBooks(){
-  if(!currentUser) return [];
-  // LOCAL MODE: localStorage ашиглана (getSession hang хийдэг учир)
-  const books = getBooks();
-  if(currentUser.isAdmin) return books;
-  return books.filter(b=>b.userId===currentUser.id);
+  // RLS ачаар зөвхөн нэвтэрсэн хэрэглэгчийн номнууд буцна
+  const { data, error } = await sb.from('books').select('*').order('created_at',{ascending:false});
+  if(error){ console.error('dbGetBooks error:', error); return []; }
+  return (data||[]).map(rowToBook);
 }
 
 async function dbGetBook(id){
-  const books = getBooks();
-  return books.find(b=>b.id===id)||null;
+  const { data, error } = await sb.from('books').select('*').eq('id', id).maybeSingle();
+  if(error){ console.error('dbGetBook error:', error); return null; }
+  return data ? rowToBook(data) : null;
 }
 
 async function dbSaveBook(book){
-  // LOCAL MODE: localStorage only
-  if(!currentUser) throw new Error('Нэвтэрнэ үү');
-  const books = getBooks();
-  book.userId = currentUser.id;
-  book.createdAt = book.createdAt || Date.now();
-  if(!book.id) book.id = 'b'+Date.now();
-  const idx = books.findIndex(b=>b.id===book.id);
-  if(idx>=0) books[idx]=book; else books.push(book);
-  setBooks(books);
-  return book;
+  const { data:{ user } } = await sb.auth.getUser();
+  if(!user) throw new Error('Нэвтэрнэ үү');
+  const payload = {
+    user_id: user.id,
+    title: book.title || '',
+    spreads: book.spreads || [],
+    updated_at: new Date().toISOString()
+  };
+  if(isUuid(book.id)){
+    // Байгаа номыг шинэчлэх
+    const { data, error } = await sb.from('books').update(payload).eq('id', book.id).select().maybeSingle();
+    if(error) throw error;
+    if(data){ book.id=data.id; book.userId=data.user_id; }
+    return book;
+  } else {
+    // Шинэ ном үүсгэх (Supabase uuid автоматаар үүсгэнэ)
+    const { data, error } = await sb.from('books').insert(payload).select().single();
+    if(error) throw error;
+    book.id = data.id;
+    book.userId = data.user_id;
+    return book;
+  }
 }
 
 async function dbDeleteBook(id){
-  const books = getBooks().filter(b=>b.id!==id);
-  setBooks(books);
+  const { error } = await sb.from('books').delete().eq('id', id);
+  if(error) console.error('dbDeleteBook error:', error);
 }
 
 async function dbGetOrders(){
@@ -1215,32 +1276,36 @@ function clearAllData(){
   showToast('Өгөгдөл цэвэрлэгдлээ.',true);
 }
 
-function doLogin(){
+async function doLogin(){
   const email=document.getElementById('login-email').value.trim();
   const pass=document.getElementById('login-pass').value;
   const err=document.getElementById('login-err');
   err.style.display='none'; err.textContent='';
   if(!email||!pass){err.textContent='Имэйл болон нууц үгээ оруулна уу';err.style.display='block';return;}
-  // Admin
+  // Admin (локал товчлол)
   if(email==='admin@photobook.mn'&&pass==='admin123'){
     currentUser={name:'Admin',email:'admin@photobook.mn',isAdmin:true,id:'admin'};
     closeAuthModal();updateNav();showPage('admin');showToast('Admin эрхээр нэвтэрлээ 👑',true);return;
   }
-  // Бүртгэлтэй хэрэглэгч шалгах
-  const all=getUsers();
-  const found=all.find(u=>u.email===email);
-  if(!found){
-    err.textContent='Бүртгэлгүй байна. Эхлээд бүртгүүлнэ үү.';err.style.display='block';return;
+  // Supabase Auth-аар нэвтрэх
+  try{
+    const { data, error } = await sb.auth.signInWithPassword({ email, password:pass });
+    if(error){
+      let msg=error.message||'';
+      if(/not\s*confirmed|confirm/i.test(msg)) msg='Имэйлээ баталгаажуулна уу. Имэйл рүү ирсэн холбоосыг дарсны дараа нэвтэрч болно 📧';
+      else if(/invalid/i.test(msg)) msg='Имэйл эсвэл нууц үг буруу байна.';
+      err.textContent=msg; err.style.display='block'; return;
+    }
+    const u=data.user, m=(u&&u.user_metadata)||{};
+    currentUser={id:u.id,name:m.name||u.email,email:u.email,phone:m.phone||'',isAdmin:false};
+    closeAuthModal();updateNav();showPage('dashboard');
+    showToast('Тавтай морилно уу, '+currentUser.name+'! 👋',true);
+  }catch(e){
+    err.textContent='Нэвтрэхэд алдаа гарлаа: '+e.message; err.style.display='block';
   }
-  if(found.pass!==pass){
-    err.textContent='Нууц үг буруу байна.';err.style.display='block';return;
-  }
-  currentUser={id:found.id,name:found.name,email:found.email,phone:found.phone||'',isAdmin:false};
-  closeAuthModal();updateNav();showPage('dashboard');
-  showToast('Тавтай морилно уу, '+found.name+'! 👋',true);
 }
 
-function doRegister(){
+async function doRegister(){
   const name=document.getElementById('reg-name').value.trim();
   const email=document.getElementById('reg-email').value.trim();
   const phone=document.getElementById('reg-phone').value.trim();
@@ -1251,20 +1316,31 @@ function doRegister(){
   if(!name||!email||!pass){err.textContent='Бүх талбарыг бөглөнө үү';err.style.display='block';return;}
   if(pass!==pass2){err.textContent='Нууц үг таарахгүй байна';err.style.display='block';return;}
   if(pass.length<6){err.textContent='Нууц үг дор хаяж 6 тэмдэгт байна';err.style.display='block';return;}
-  const all=getUsers();
-  if(all.find(u=>u.email===email)){err.textContent='Энэ имэйл бүртгэлтэй байна. Нэвтэрнэ үү.';err.style.display='block';return;}
-  const uid='u_'+Date.now();
-  all.push({id:uid,name:name,email:email,pass:pass,phone:phone});
-  setUsers(all);
-  currentUser={id:uid,name:name,email:email,phone:phone,isAdmin:false};
-  closeAuthModal();updateNav();showPage('dashboard');
-  showToast('Бүртгэл амжилттай! '+name+' тавтай морилно уу 🎉',true);
+  // Supabase Auth-аар бүртгэх
+  try{
+    const { data, error } = await sb.auth.signUp({
+      email, password:pass,
+      options:{ data:{ name, phone }, emailRedirectTo: window.location.origin }
+    });
+    if(error){
+      let msg=error.message||'';
+      if(/already|registered|exists/i.test(msg)) msg='Энэ имэйл бүртгэлтэй байна. Нэвтэрнэ үү.';
+      err.textContent=msg; err.style.display='block'; return;
+    }
+    // Confirm email ON тул одоохондоо session үүсэхгүй — имэйл баталгаажуулах шаардлагатай
+    closeAuthModal();
+    showToast('Бүртгэл үүслээ! '+email+' хаяг руу илгээсэн баталгаажуулах холбоосыг дарсны дараа нэвтэрнэ үү 📧', true);
+  }catch(e){
+    err.textContent='Бүртгэхэд алдаа гарлаа: '+e.message; err.style.display='block';
+  }
 }
 
 async function doLogout(){
+  try{ await flushBookSave(); }catch(e){} // хүлээгдэж буй засварыг хадгална
   await sb.auth.signOut();
   currentUser=null;
   currentBookId=null;
+  window._currentBook=null;
   updateNav();
   showPage('landing');
   showToast('Амжилттай гарлаа');
@@ -1378,6 +1454,7 @@ async function createNewBook(){
 }
 
 async function openBook(id){
+  await flushBookSave(); // өмнөх номын хүлээгдэж буй засварыг хадгална
   currentBookId=id;
   currentPageIdx=0;
   const book = await loadBook(id);
@@ -1469,16 +1546,22 @@ async function loadBook(id){
   window._currentBook = book;
   return book;
 }
+// Debounce: засвар бүрт Supabase руу хандахгүй, түр хүлээгээд нэг удаа хадгална
+let _saveTimer=null, _pendingBook=null, _savingPromise=null;
 async function saveBook(book){
-  try{
-    await dbSaveBook(book);
-  }catch(e){
-    console.error('saveBook error:', e);
-  }
+  _pendingBook=book;
+  if(_saveTimer) clearTimeout(_saveTimer);
+  _saveTimer=setTimeout(()=>{ flushBookSave(); }, 1200);
 }
-// LOCAL MODE: debounce/flush шаардлагагүй тул saveBookNow=saveBook, flushBookSave=no-op
-async function saveBookNow(book){ return saveBook(book); }
-async function flushBookSave(){ return; }
+// Шууд хадгалах (хүлээхгүй)
+async function saveBookNow(book){ _pendingBook=book; return flushBookSave(); }
+// Хүлээгдэж буй хадгалалтыг албадан дуусгах
+async function flushBookSave(){
+  if(_saveTimer){ clearTimeout(_saveTimer); _saveTimer=null; }
+  const b=_pendingBook; _pendingBook=null;
+  if(!b) return;
+  try{ await dbSaveBook(b); }catch(e){ console.error('flushBookSave error:', e); }
+}
 
 function applyMobileSidebarLayout(){
   const wrap=document.getElementById('editorSidebarWrap');
@@ -2567,10 +2650,11 @@ function previewBook(){
   .spread.cover-spread{max-width:430px}
   .page-side{flex:1;display:flex;flex-direction:column;min-height:0;min-width:0;background:#fff;position:relative;aspect-ratio:1/1}
   @media(max-width:600px){
-    body{padding:.5rem .3rem}
-    .spread{flex-direction:column;max-width:100%;margin:0 0 6px}
+    html{scroll-snap-type:y mandatory;scroll-padding:6px}
+    body{padding:.4rem .3rem}
+    .spread{flex-direction:column;max-width:100%;margin:0 0 10px}
     .spread.cover-spread{max-width:100%}
-    .page-side{aspect-ratio:1/1;flex-shrink:0;width:100%}
+    .page-side{aspect-ratio:1/1;flex-shrink:0;width:100%;scroll-snap-align:center;scroll-snap-stop:always}
     .gutter{width:100%;height:4px;background:linear-gradient(to bottom,#bbb,#eee,#bbb)}
     h2{font-size:1rem;margin-bottom:.8rem}
   }
@@ -2656,7 +2740,7 @@ function previewBook(){
     return `<div class="page-side cover-preview-side"><div class="cover-preview-title-wrap">${titleHTML}</div><div class="cover-preview-img-wrap layout-${layoutId}">${slots}</div></div>`;
   }
 
-  let h=`<html><head><title>${book.title||'Preview'}</title><style>${layoutCSS}</style></head><body>`;
+  let h=`<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>${book.title||'Preview'}</title><style>${layoutCSS}</style></head><body>`;
   h+=`<h2>${book.title||'Фото ном'}</h2>`;
   spreads.forEach((sp,i)=>{
     if(i===0){
@@ -3301,11 +3385,23 @@ async function generatePDF(orders, filename){
 // ==================== INIT ====================
 async function init(){
   try{
-    updateNav();
-    // LOCAL MODE: session сэргээхгүй, landing харуулна
-    showPage('landing');
+    // Supabase session-ыг сэргээх (гацахаас сэргийлж 4 сек timeout)
+    const sessionP = sb.auth.getSession();
+    const timeoutP = new Promise(res=>setTimeout(()=>res({data:{session:null},_timeout:true}), 4000));
+    const r = await Promise.race([sessionP, timeoutP]);
+    const session = (r && r.data) ? r.data.session : null;
+    if(session && session.user){
+      const u=session.user, m=u.user_metadata||{};
+      currentUser={id:u.id,name:m.name||u.email,email:u.email,phone:m.phone||'',isAdmin:false};
+      updateNav();
+      showPage('dashboard');
+    } else {
+      updateNav();
+      showPage('landing');
+    }
   }catch(e){
     console.error('Init error:', e);
+    updateNav();
     showPage('landing');
   }
 }
