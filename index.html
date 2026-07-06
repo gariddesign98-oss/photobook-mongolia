@@ -316,8 +316,9 @@ nav{display:flex;align-items:center;justify-content:space-between;padding:1rem 2
   .dash-banner-title{font-size:1.4rem}
   .editor-wrap,.editor-body{flex-direction:column !important}
   /* iOS: editor-ийг харагдах хэсэгт (dvh) түгжинэ — bodyгүй гүйлт → thumbnail nav-ийн доогуур орж халхлагдахгүй */
-  #page-editor{min-height:0 !important;height:calc(100dvh - 54px) !important;overflow:hidden !important}
+  #page-editor{min-height:0 !important;height:calc(100dvh - var(--nav-h, 60px)) !important;overflow:hidden !important}
   .editor-outer{height:100% !important;overflow:hidden !important}
+  body:has(#page-editor.active){overflow:hidden !important;height:100dvh !important}
   .editor-sidebar-wrap{display:flex !important;width:100% !important;height:auto !important;flex-direction:column !important;border-right:none !important;border-bottom:.5px solid #e0dbd6 !important;flex-shrink:0 !important;position:relative;z-index:2;background:#f0ece8 !important}
   .editor-sidebar{flex-direction:row !important;overflow-x:auto !important;overflow-y:hidden !important;padding:.4rem .5rem !important;gap:.4rem !important;-webkit-overflow-scrolling:touch;touch-action:pan-x;scroll-snap-type:x proximity;flex-wrap:nowrap !important;min-height:0 !important}
   .sidebar-spread{min-width:58px !important;max-width:58px !important;flex-shrink:0 !important;scroll-snap-align:start}
@@ -1567,6 +1568,9 @@ async function flushBookSave(){
 }
 
 function applyMobileSidebarLayout(){
+  // nav-ийн жинхэнэ өндрийг хэмжиж CSS хувьсагчид өгнө (editor яг таарч түгжинэ)
+  const navEl=document.querySelector('nav');
+  if(navEl) document.documentElement.style.setProperty('--nav-h', navEl.offsetHeight+'px');
   const wrap=document.getElementById('editorSidebarWrap');
   const sidebar=document.getElementById('editorSidebar');
   const main=document.querySelector('.editor-main');
