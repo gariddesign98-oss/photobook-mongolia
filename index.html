@@ -1126,14 +1126,18 @@ function rowToBook(r){
 function isUuid(v){ return typeof v==='string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v); }
 
 async function dbGetBooks(){
-  // RLS ачаар зөвхөн нэвтэрсэн хэрэглэгчийн номнууд буцна
-  const { data, error } = await sb.from('books').select('*').order('created_at',{ascending:false});
+  // Хамгаалалт: энгийн хэрэглэгч зөвхөн ӨӨРИЙН номоо (RLS дээр нэмэлт шүүлт), админ бүгдийг
+  let q = sb.from('books').select('*');
+  if(currentUser && !currentUser.isAdmin) q = q.eq('user_id', currentUser.id);
+  const { data, error } = await q.order('created_at',{ascending:false});
   if(error){ console.error('dbGetBooks error:', error); return []; }
   return (data||[]).map(rowToBook);
 }
 
 async function dbGetBook(id){
-  const { data, error } = await sb.from('books').select('*').eq('id', id).maybeSingle();
+  let q = sb.from('books').select('*').eq('id', id);
+  if(currentUser && !currentUser.isAdmin) q = q.eq('user_id', currentUser.id);
+  const { data, error } = await q.maybeSingle();
   if(error){ console.error('dbGetBook error:', error); return null; }
   return data ? rowToBook(data) : null;
 }
