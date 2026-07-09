@@ -1111,6 +1111,15 @@ async function uploadToCloudinary(file){
   };
 }
 
+// Editor/thumbnail дээр харуулах жижиг хувилбар (оригинал URL нь PDF-д хэвээр үлдэнэ)
+function displayUrl(src, w){
+  w=w||900;
+  if(typeof src==='string' && src.indexOf('res.cloudinary.com')>-1 && src.indexOf('/upload/')>-1){
+    return src.replace('/upload/','/upload/w_'+w+',q_auto,f_auto/');
+  }
+  return src; // base64 эсвэл бусад URL хэвээр
+}
+
 // ==================== SUPABASE DB ====================
 // Supabase мөр → апп-ын номын объект (snake_case → camelCase)
 function rowToBook(r){
@@ -1425,7 +1434,7 @@ async function renderDashboard(){
     div.innerHTML=`
       <div class="book-thumb-img">
         <div class="cover-preview">
-          ${firstImg?`<img src="${firstImg}" alt="cover"/>`:'<div style="width:100%;height:100%;background:#E8E2DA;display:flex;align-items:center;justify-content:center;font-size:1.5rem">📷</div>'}
+          ${firstImg?`<img src="${displayUrl(firstImg,300)}" alt="cover"/>`:'<div style="width:100%;height:100%;background:#E8E2DA;display:flex;align-items:center;justify-content:center;font-size:1.5rem">📷</div>'}
         </div>
       </div>
       <div class="book-thumb-body">
@@ -1517,7 +1526,7 @@ function buildThumbSide(page, layoutId){
   const imgs=(page&&page.images)||[];
   const cell=(i)=>{
     const src=imgs[i]&&imgs[i].src;
-    return `<div class="tcell">${src?`<img src="${src}" alt=""/>`:''}</div>`;
+    return `<div class="tcell">${src?`<img src="${displayUrl(src,200)}" alt=""/>`:''}</div>`;
   };
   let inner='';
   if(layoutId==='1b2'){
@@ -2064,7 +2073,7 @@ function buildSlot(imgData, spreadIdx, side, slotIdx){
       imgStyle=`width:100%;height:100%;object-fit:cover;object-position:${50+px}% ${50+py}%;transform:rotate(${rot}deg) scale(${scale});position:absolute;top:0;left:0;cursor:grab`;
     }
     slotHTML=`<div class="pslot filled fit-${fit}" id="pslot_${uid}" data-si="${spreadIdx}" data-side="${side}" data-slot="${slotIdx}">
-      <img src="${imgData.src}" style="${imgStyle}" alt="" id="img_${uid}" draggable="false"/>
+      <img src="${displayUrl(imgData.src,900)}" style="${imgStyle}" alt="" id="img_${uid}" draggable="false"/>
       <div class="drag-hint">📱 1 хуруугаар чирэх · 2 хуруугаар томруулах</div>
       <input type="file" class="file-input" id="file_${uid}" accept="image/*" onchange="handleSlotUpload(event,'${spreadIdx}','${side}','${slotIdx}')"/>
       <button class="rm-btn" onclick="removeSlotImage('${spreadIdx}','${side}','${slotIdx}');event.stopPropagation()">✕</button>
@@ -2733,7 +2742,7 @@ function previewBook(){
     const py=imgData.py||0;
     const posStyle=fit==='cover'?`object-fit:cover;object-position:${50+px}% ${50+py}%`:'object-fit:contain';
     const rotStyle=rot?`transform:rotate(${rot}deg)`:'';
-    return `<div class="slot-with-cap"><div class="pslot fit-${fit}"><img src="${imgData.src}" style="${posStyle};${rotStyle}"/></div>${capHTML}</div>`;
+    return `<div class="slot-with-cap"><div class="pslot fit-${fit}"><img src="${displayUrl(imgData.src,900)}" style="${posStyle};${rotStyle}"/></div>${capHTML}</div>`;
   }
 
   function buildPreviewSide(sp, side){
@@ -2856,7 +2865,7 @@ function renderImageList(){
     const thumb=document.createElement('div');
     thumb.className='image-list-thumb';
     thumb.title='Хуудас '+(item.spreadIdx+1);
-    thumb.innerHTML=`<img src="${item.img.src}" alt=""/>`;
+    thumb.innerHTML=`<img src="${displayUrl(item.img.src,200)}" alt=""/>`;
     thumb.onclick=()=>{
       currentPageIdx=item.spreadIdx;
       renderEditor();
@@ -2888,7 +2897,7 @@ function renderCheckout(){
     document.getElementById('summaryTitle').textContent=book.title||'Нэргүй ном';
     const firstImg=book.spreads&&book.spreads[0]&&((book.spreads[0].left?.images||[])[0]?.src||(book.spreads[0].right?.images||[])[0]?.src);
     if(firstImg){
-      document.getElementById('summaryImg').innerHTML=`<img src="${firstImg}" style="width:100%;height:100%;object-fit:cover"/>`;
+      document.getElementById('summaryImg').innerHTML=`<img src="${displayUrl(firstImg,600)}" style="width:100%;height:100%;object-fit:cover"/>`;
     }
     const pageCount=(book.spreads||[]).length*2;
     document.getElementById('summaryMeta').textContent=`${selectedBookTypeMeta} · ${pageCount} нүүр`;
@@ -3158,22 +3167,32 @@ async function generatePDF(orders, filename){
       const img=new Image();
       // Cloudinary зурагт CORS хэрэгтэй — эс бөгөөс canvas (cover crop) tainted болно
       if(typeof src==='string' && src.indexOf('http')===0) img.crossOrigin='anonymous';
-      img.onload=()=>res(img);
-      img.onerror=()=>res(null);
+      let done=false;
+      const finish=v=>{ if(done)return; done=true; res(v); };
+      img.onload=()=>finish(img);
+      img.onerror=()=>finish(null);
+      setTimeout(()=>finish(null), 25000); // гацахаас сэргийлнэ (25 сек)
       img.src=hiResUrl(src);
     });
   }
+  // Бүх өвөрмөц зургийн URL-ийг цуглуулаад ЗЭРЭГ (багцаар) татна — хурдан
   const imgCache={};
+  const allSrcs=[];
   for(const o of orders){
     for(const sp of (o.bookPages||[])){
       for(const side of ['left','right']){
         for(const img of ((sp[side]&&sp[side].images)||[])){
-          if(img&&img.src&&!imgCache[img.src]){
-            imgCache[img.src]=await loadImg(img.src);
-          }
+          if(img&&img.src&&!imgCache.hasOwnProperty(img.src) && allSrcs.indexOf(img.src)<0) allSrcs.push(img.src);
         }
       }
     }
+  }
+  const BATCH=6; // зэрэг татах тоо
+  for(let i=0;i<allSrcs.length;i+=BATCH){
+    const batch=allSrcs.slice(i,i+BATCH);
+    showToast('PDF бэлдэж байна… ('+Math.min(i+BATCH,allSrcs.length)+'/'+allSrcs.length+')');
+    const loaded=await Promise.all(batch.map(s=>loadImg(s)));
+    batch.forEach((s,j)=>{ imgCache[s]=loaded[j]; });
   }
 
   const {jsPDF}=window.jspdf;
@@ -3190,22 +3209,30 @@ async function generatePDF(orders, filename){
     const color=opts.color||'#333333';
     const align=opts.align||'left';
     const bold=opts.bold||false;
+    const outline=opts.outline||false;   // зургийн дээр уншигдахуйц болгох контур
     const PXMM=11.8;                      // ~300dpi
     const fontPx=Math.max(4, size*0.3528*PXMM);
+    const pad=outline?Math.ceil(fontPx*0.25):0;
     const c=document.createElement('canvas');
     const cx=c.getContext('2d');
     const fontStr=(bold?'bold ':'')+fontPx+"px 'Inter','Helvetica Neue',Arial,sans-serif";
     cx.font=fontStr;
-    const wPx=Math.max(1,Math.ceil(cx.measureText(text).width));
-    const hPx=Math.max(1,Math.ceil(fontPx*1.3));
+    const wPx=Math.max(1,Math.ceil(cx.measureText(text).width))+pad*2;
+    const hPx=Math.max(1,Math.ceil(fontPx*1.3))+pad*2;
     c.width=wPx; c.height=hPx;
-    cx.font=fontStr; cx.fillStyle=color; cx.textBaseline='top';
-    cx.fillText(text,0,0);
+    cx.font=fontStr; cx.textBaseline='top';
+    if(outline){
+      cx.lineJoin='round';
+      cx.lineWidth=fontPx*0.16;
+      cx.strokeStyle='rgba(0,0,0,0.72)';
+      cx.strokeText(text,pad,pad);
+    }
+    cx.fillStyle=color; cx.fillText(text,pad,pad);
     const wMm=wPx/PXMM, hMm=hPx/PXMM;
     let drawX=xMm;
     if(align==='center') drawX=xMm-wMm/2;
     else if(align==='right') drawX=xMm-wMm;
-    const drawY=yMm - size*0.3528*0.82;   // baseline ≈ yMm
+    const drawY=yMm - size*0.3528*0.82 - pad/PXMM;   // baseline ≈ yMm
     try{ doc.addImage(c,'PNG',drawX,drawY,wMm,hMm); }catch(e){}
   }
 
@@ -3426,13 +3453,11 @@ async function generatePDF(orders, filename){
           const pageNum=si*2+(side==='left'?1:2);
           const contentH=PH-7;
           drawPageSide(sp, side, 0, 0, PW, contentH);
-          // Cover дээр номын нэрийг гаргана
+          // Cover дээр номын нэрийг зургийн дээр гаргана (контуртай, уншигдахуйц)
           if(isCover){
             const title=o.bookTitle||o.book_title||'';
             if(title){
-              doc.setFillColor(255,255,255);
-              doc.rect(25, 16, PW-50, 22, 'F');
-              pdfText(title, PW/2, 30, {size:20, color:'#1a1a1a', align:'center', bold:true});
+              pdfText(title, PW/2, 32, {size:24, color:'#ffffff', align:'center', bold:true, outline:true});
             }
           }
           doc.setFontSize(7);
