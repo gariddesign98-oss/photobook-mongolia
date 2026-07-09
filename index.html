@@ -3113,13 +3113,21 @@ function findOrderBook(o){
   return cands.find(hasImgs) || cands.find(b=>b&&b.spreads) || null;
 }
 
+async function getOrderBookSpreads(o){
+  // Захиалгын book_id-аар Supabase-ээс жинхэнэ номыг ачаална (админ бүх номыг унших эрхтэй)
+  const id=o.book_id||o.bookId;
+  if(id){
+    try{ const book=await dbGetBook(id); if(book&&book.spreads&&book.spreads.length) return book.spreads; }catch(e){ console.warn('getOrderBookSpreads',e); }
+  }
+  // Ном устгагдсан бол захиалгын хадгалсан snapshot-ыг ашиглана
+  return o.book_pages || o.bookPages || [];
+}
+
 async function exportOrderPDF(orderId){
   const orders=await dbGetOrders();
   const o=orders.find(x=>x.id===orderId);
   if(!o){ showToast('Захиалга олдсонгүй'); return; }
-  const book=findOrderBook(o);
-  if(book&&book.spreads){ o.bookPages=book.spreads; }
-  else { showToast('Номын зурган мэдээлэл олдсонгүй (энэ браузерт хадгалагдаагүй)'); }
+  o.bookPages = await getOrderBookSpreads(o);
   await generatePDF([o], `Захиалга_${o.id}`);
 }
 
@@ -3129,9 +3137,7 @@ async function exportAllPDF(){
   if(orders.length===0){ showToast('Захиалга байхгүй байна'); return; }
   const enriched=[];
   for(const o of orders){
-    const book=findOrderBook(o);
-    if(book&&book.spreads) enriched.push({...o,bookPages:book.spreads});
-    else enriched.push(o);
+    enriched.push({...o, bookPages: await getOrderBookSpreads(o)});
   }
   await generatePDF(enriched,'Бүх_захиалгууд');
 }
@@ -3174,6 +3180,34 @@ async function generatePDF(orders, filename){
   const PW=270, PH=270, PAD=12;
   const doc=new jsPDF({orientation:'portrait',unit:'mm',format:[PW,PH]});
   let isFirst=true;
+
+  // Кирилл текстийг canvas-аар зурж PDF-д зураг болгон оруулна (jsPDF-ийн helvetica кирилл дэмждэггүй)
+  function pdfText(text, xMm, yMm, opts){
+    opts=opts||{};
+    text=String(text==null?'':text);
+    if(!text.trim()) return;
+    const size=opts.size||10;            // pt
+    const color=opts.color||'#333333';
+    const align=opts.align||'left';
+    const bold=opts.bold||false;
+    const PXMM=11.8;                      // ~300dpi
+    const fontPx=Math.max(4, size*0.3528*PXMM);
+    const c=document.createElement('canvas');
+    const cx=c.getContext('2d');
+    const fontStr=(bold?'bold ':'')+fontPx+"px 'Inter','Helvetica Neue',Arial,sans-serif";
+    cx.font=fontStr;
+    const wPx=Math.max(1,Math.ceil(cx.measureText(text).width));
+    const hPx=Math.max(1,Math.ceil(fontPx*1.3));
+    c.width=wPx; c.height=hPx;
+    cx.font=fontStr; cx.fillStyle=color; cx.textBaseline='top';
+    cx.fillText(text,0,0);
+    const wMm=wPx/PXMM, hMm=hPx/PXMM;
+    let drawX=xMm;
+    if(align==='center') drawX=xMm-wMm/2;
+    else if(align==='right') drawX=xMm-wMm;
+    const drawY=yMm - size*0.3528*0.82;   // baseline ≈ yMm
+    try{ doc.addImage(c,'PNG',drawX,drawY,wMm,hMm); }catch(e){}
+  }
 
   function drawImg(imgData, rx, ry, rw, rh){
     if(!imgData||!imgData.src) return;
@@ -3345,11 +3379,7 @@ async function generatePDF(orders, filename){
       }
       drawImg(imgData, r.x, r.y, r.w, r.imgH);
       if(imgData.caption){
-        doc.setFontSize(10);
-        doc.setFont('helvetica','normal');
-        doc.setTextColor(60,60,60);
-        const capLines=doc.splitTextToSize(imgData.caption, r.w-2);
-        doc.text(capLines[0]||'', r.x+r.w/2, r.capY, {align:'center'});
+        pdfText(imgData.caption, r.x+r.w/2, r.capY+3, {size:9, color:'#3c3c3c', align:'center'});
       }
     });
   }
@@ -3361,31 +3391,26 @@ async function generatePDF(orders, filename){
 
     doc.setFillColor(26,26,26);
     doc.rect(0,0,PW,16,'F');
-    doc.setFontSize(12); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
-    doc.text('PhotoBook Mongolia', PAD, 10);
-    doc.setFontSize(8); doc.setFont('helvetica','normal');
-    doc.text('Захиалга #'+o.id, PW-PAD, 10, {align:'right'});
+    pdfText('PhotoBook Mongolia', PAD, 10, {size:12, color:'#ffffff', bold:true});
+    pdfText('Захиалга #'+o.id, PW-PAD, 10, {size:8, color:'#ffffff', align:'right'});
 
     let y=24;
     const rows=[
-      ['Хэрэглэгч', o.userName],
-      ['Имэйл', o.userEmail],
+      ['Хэрэглэгч', o.userName||o.user_name],
+      ['Имэйл', o.userEmail||o.user_email],
       ['Утас', o.phone||'—'],
       ['Хаяг', o.address||'—'],
-      ['Номын нэр', o.bookTitle||'Нэргүй ном'],
-      ['Номын төрөл', o.bookType||'—'],
+      ['Номын нэр', o.bookTitle||o.book_title||'Нэргүй ном'],
+      ['Номын төрөл', o.bookType||o.book_type||'—'],
       ['Нүүрний тоо', ((o.bookPages||[]).length*2)+' нүүр'],
-      ['Нийт дүн', '₮'+o.amount.toLocaleString()],
-      ['Төлбөрийн арга', o.paymentMethod||'—'],
+      ['Нийт дүн', '₮'+(o.amount||0).toLocaleString()],
+      ['Төлбөрийн арга', o.paymentMethod||o.payment_method||'—'],
       ['Төлөв', {pending:'Хүлээгдэж буй',processing:'Боловсруулж байна',paid:'Төлөгдсөн'}[o.status]||o.status],
-      ['Огноо', new Date(o.date).toLocaleDateString('mn-MN')],
+      ['Огноо', new Date(o.date||o.created_at||Date.now()).toLocaleDateString('mn-MN')],
     ];
-    doc.setFontSize(9);
     rows.forEach(([k,v])=>{
-      doc.setFont('helvetica','bold'); doc.setTextColor(120,120,120);
-      doc.text(k+':', PAD, y);
-      doc.setFont('helvetica','normal'); doc.setTextColor(30,30,30);
-      doc.text(String(v||'—'), PAD+50, y);
+      pdfText(k+':', PAD, y, {size:9, color:'#787878', bold:true});
+      pdfText(String(v||'—'), PAD+50, y, {size:9, color:'#1e1e1e'});
       y+=8;
     });
 
@@ -3395,11 +3420,21 @@ async function generatePDF(orders, filename){
         ['left','right'].forEach((side)=>{
           const page=sp[side]||{};
           const imgs=(page.images||[]).filter(i=>i&&i.src);
-          if(imgs.length===0) return; // skip empty pages
+          const isCover=(si===0 && side==='left');
+          if(imgs.length===0 && !isCover) return; // хоосон нүүрийг алгасна (cover-ыг гаргана)
           doc.addPage([PW,PH],'portrait');
           const pageNum=si*2+(side==='left'?1:2);
           const contentH=PH-7;
           drawPageSide(sp, side, 0, 0, PW, contentH);
+          // Cover дээр номын нэрийг гаргана
+          if(isCover){
+            const title=o.bookTitle||o.book_title||'';
+            if(title){
+              doc.setFillColor(255,255,255);
+              doc.rect(25, 16, PW-50, 22, 'F');
+              pdfText(title, PW/2, 30, {size:20, color:'#1a1a1a', align:'center', bold:true});
+            }
+          }
           doc.setFontSize(7);
           doc.setTextColor(160,160,160);
           doc.setFont('helvetica','normal');
